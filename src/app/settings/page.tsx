@@ -3,18 +3,47 @@
 import { useEffect, useState } from "react";
 import { DEFAULT_CONFIG } from "@/lib/constants";
 
+type SettingsData = {
+  configs: Array<{ key: string; value: string; description: string }>;
+  approvalRules: Array<Record<string, unknown>>;
+  qcRules: Array<Record<string, unknown>>;
+};
+
 export default function SettingsPage() {
-  const [data, setData] = useState<{
-    configs: Array<{ key: string; value: string; description: string }>;
-    approvalRules: Array<Record<string, unknown>>;
-    qcRules: Array<Record<string, unknown>>;
-  } | null>(null);
+  const [data, setData] = useState<SettingsData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/settings").then((r) => r.json()).then(setData);
+    fetch("/api/settings")
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) {
+          setError(
+            r.status === 403
+              ? "仅系统管理员可查看规则配置，请在右上角切换为「系统管理员」角色"
+              : (body.error as string) || "加载失败"
+          );
+          return;
+        }
+        setData(body);
+      })
+      .catch(() => setError("网络错误，请稍后重试"))
+      .finally(() => setLoading(false));
   }, []);
 
-  if (!data) return <div>加载中...</div>;
+  if (loading) return <div>加载中...</div>;
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="mb-6 text-2xl font-bold">规则配置</h1>
+        <div className="card text-[var(--ink-soft)]">{error}</div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
 
   return (
     <div>

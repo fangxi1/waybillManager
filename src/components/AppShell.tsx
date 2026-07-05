@@ -11,14 +11,14 @@ interface User {
   role: string;
 }
 
-const NAV = [
+const NAV: Array<{ href: string; label: string; adminOnly?: boolean }> = [
   { href: "/", label: "工作台" },
   { href: "/tickets", label: "工单列表" },
   { href: "/tickets/new", label: "异常上报" },
   { href: "/scan", label: "扫描品控" },
   { href: "/approvals", label: "待我审批" },
   { href: "/sync", label: "接口监控" },
-  { href: "/settings", label: "规则配置" },
+  { href: "/settings", label: "规则配置", adminOnly: true },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -76,7 +76,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-6 pb-2">
-          {NAV.map((item) => (
+          {NAV.filter((item) => !item.adminOnly || user?.role === "admin").map((item) => (
             <Link
               key={item.href}
               href={item.href}
