@@ -18,6 +18,7 @@ const NAV: Array<{ href: string; label: string; adminOnly?: boolean }> = [
   { href: "/scan", label: "扫描品控" },
   { href: "/approvals", label: "待我审批" },
   { href: "/sync", label: "接口监控" },
+  { href: "/waybills", label: "运单快照" },
   { href: "/settings", label: "规则配置", adminOnly: true },
 ];
 
