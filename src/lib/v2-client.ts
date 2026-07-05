@@ -5,6 +5,40 @@ import { getConfigNumber, newRequestId, nowIso } from "./utils";
 
 export type { V2Waybill, V2ApiResult };
 
+const EMPTY_WAYBILL_ERROR = "运单号不能为空";
+
+function normalizeWaybillNo(waybillNo: string): string {
+  return String(waybillNo ?? "").trim();
+}
+
+function rejectEmptyWaybillNo<T>(
+  apiName: string,
+  waybillNo: string,
+  requestId: string,
+  start: number,
+  requestSummary: string,
+  method = "GET"
+): V2ApiResult<T> | null {
+  if (normalizeWaybillNo(waybillNo)) return null;
+  void logApiCall({
+    requestId,
+    apiName,
+    method,
+    requestSummary,
+    responseStatus: 0,
+    durationMs: Date.now() - start,
+    success: false,
+    errorMessage: EMPTY_WAYBILL_ERROR,
+  });
+  return {
+    data: null,
+    source: "cache",
+    syncedAt: nowIso(),
+    requestId,
+    error: EMPTY_WAYBILL_ERROR,
+  };
+}
+
 function normalizeWaybill(raw: Partial<V2Waybill> | Record<string, unknown>): V2Waybill {
   const r = raw as Record<string, unknown>;
   const waybillNo = String(r.waybillNo ?? r.waybill_no ?? "").trim();
@@ -275,12 +309,21 @@ async function getAllCachedWaybills(): Promise<V2Waybill[]> {
 export async function getWaybill(waybillNo: string, live = true): Promise<V2ApiResult<V2Waybill>> {
   const requestId = newRequestId();
   const start = Date.now();
+  const normalizedNo = normalizeWaybillNo(waybillNo);
+  const rejected = rejectEmptyWaybillNo<V2Waybill>(
+    "getWaybill",
+    waybillNo,
+    requestId,
+    start,
+    `waybillNo=${waybillNo}`
+  );
+  if (rejected) return rejected;
 
   if (live) {
     try {
       const { data, status } = await fetchFromV2Api<unknown>(
         "getWaybill",
-        `/waybills/${encodeURIComponent(waybillNo)}`
+        `/waybills/${encodeURIComponent(normalizedNo)}`
       );
       const waybill = extractWaybillFromResponse(data);
       if (!waybill) {
@@ -291,7 +334,7 @@ export async function getWaybill(waybillNo: string, live = true): Promise<V2ApiR
         requestId,
         apiName: "getWaybill",
         method: "GET",
-        requestSummary: `waybillNo=${waybillNo}`,
+        requestSummary: `waybillNo=${normalizedNo}`,
         responseStatus: status,
         durationMs: Date.now() - start,
         success: true,
@@ -303,16 +346,16 @@ export async function getWaybill(waybillNo: string, live = true): Promise<V2ApiR
         requestId,
         apiName: "getWaybill",
         method: "GET",
-        requestSummary: `waybillNo=${waybillNo}`,
+        requestSummary: `waybillNo=${normalizedNo}`,
         responseStatus: 0,
         durationMs: Date.now() - start,
         success: false,
         errorMessage: msg,
       });
-      const cached = await getCachedWaybill(waybillNo);
+      const cached = await getCachedWaybill(normalizedNo);
       if (cached) {
         const snap = await getDb().query.waybillSnapshots.findFirst({
-          where: eq(schema.waybillSnapshots.waybillNo, waybillNo),
+          where: eq(schema.waybillSnapshots.waybillNo, normalizedNo),
         });
         return {
           data: cached,
@@ -326,10 +369,10 @@ export async function getWaybill(waybillNo: string, live = true): Promise<V2ApiR
     }
   }
 
-  const cached = await getCachedWaybill(waybillNo);
+  const cached = await getCachedWaybill(normalizedNo);
   const snap = cached
     ? await getDb().query.waybillSnapshots.findFirst({
-        where: eq(schema.waybillSnapshots.waybillNo, waybillNo),
+        where: eq(schema.waybillSnapshots.waybillNo, normalizedNo),
       })
     : null;
   return {
@@ -346,17 +389,26 @@ export async function validateSkuOnWaybill(
 ): Promise<V2ApiResult<boolean>> {
   const requestId = newRequestId();
   const start = Date.now();
+  const normalizedNo = normalizeWaybillNo(waybillNo);
+  const rejected = rejectEmptyWaybillNo<boolean>(
+    "validateSku",
+    waybillNo,
+    requestId,
+    start,
+    `waybillNo=${waybillNo}, sku=${sku}`
+  );
+  if (rejected) return rejected;
 
   try {
     const { data, status } = await fetchFromV2Api<{ valid: boolean }>(
       "validateSku",
-      `/waybills/${encodeURIComponent(waybillNo)}/skus/${encodeURIComponent(sku)}/validate`
+      `/waybills/${encodeURIComponent(normalizedNo)}/skus/${encodeURIComponent(sku)}/validate`
     );
     await logApiCall({
       requestId,
       apiName: "validateSku",
       method: "GET",
-      requestSummary: `waybillNo=${waybillNo}, sku=${sku}`,
+      requestSummary: `waybillNo=${normalizedNo}, sku=${sku}`,
       responseStatus: status,
       durationMs: Date.now() - start,
       success: true,
@@ -368,13 +420,13 @@ export async function validateSkuOnWaybill(
       requestId,
       apiName: "validateSku",
       method: "GET",
-      requestSummary: `waybillNo=${waybillNo}, sku=${sku}`,
+      requestSummary: `waybillNo=${normalizedNo}, sku=${sku}`,
       responseStatus: 0,
       durationMs: Date.now() - start,
       success: false,
       errorMessage: msg,
     });
-    const cached = await getCachedWaybill(waybillNo);
+    const cached = await getCachedWaybill(normalizedNo);
     if (cached) {
       const valid = cached.skus.some((s) => s.sku === sku);
       return {
@@ -450,10 +502,21 @@ export async function writebackExceptionFlag(
 ): Promise<V2ApiResult<boolean>> {
   const requestId = newRequestId();
   const start = Date.now();
+  const normalizedNo = normalizeWaybillNo(waybillNo);
+  const rejected = rejectEmptyWaybillNo<boolean>(
+    "writebackException",
+    waybillNo,
+    requestId,
+    start,
+    JSON.stringify(payload),
+    "POST"
+  );
+  if (rejected) return rejected;
+
   try {
     const { data, status } = await fetchFromV2Api<{ ok: boolean }>(
       "writebackException",
-      `/waybills/${encodeURIComponent(waybillNo)}/exception-flag`,
+      `/waybills/${encodeURIComponent(normalizedNo)}/exception-flag`,
       { method: "POST", body: payload }
     );
     await logApiCall({
