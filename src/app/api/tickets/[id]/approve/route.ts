@@ -27,7 +27,9 @@ export async function POST(
     });
     if (!ticket) return NextResponse.json({ error: "工单不存在" }, { status: 404 });
 
-    const idempotencyKey = body.idempotencyKey || `${user.id}_${body.action}_${Date.now()}`;
+    const idempotencyKey =
+      body.idempotencyKey ||
+      `${user.id}_${body.action}${body.level != null ? `_${body.level}` : ""}_${id}`;
 
     if (body.action === "approve") {
       const level = body.level as 1 | 2;
@@ -76,6 +78,7 @@ export async function POST(
         ticket,
         supervisor: user,
         reason: body.reason,
+        idempotencyKey,
       });
       return NextResponse.json(result);
     }

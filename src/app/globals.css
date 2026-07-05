@@ -121,3 +121,26 @@ table.data tbody td {
 table.data tbody tr:hover {
   @apply bg-[var(--accent-tint)];
 }
+
+.loading-overlay {
+  @apply fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4;
+}
+
+.loading-overlay-card {
+  @apply flex min-w-[240px] flex-col items-center rounded-lg border border-[var(--line)] bg-white px-8 py-7 shadow-xl;
+}
+
+.loading-spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 3px solid var(--accent-tint);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: loading-spin 0.8s linear infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

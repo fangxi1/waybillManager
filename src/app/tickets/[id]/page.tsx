@@ -6,10 +6,11 @@ import {
   TICKET_STATUS_LABELS,
   LOGISTICS_TYPE_LABELS,
   QC_TYPE_LABELS,
-  ROLE_LABELS,
 } from "@/lib/constants";
 
 import { AiSuggestionCard } from "@/components/AiSuggestionCard";
+import { ConfirmModal } from "@/components/ConfirmModal";
+import { LoadingOverlay } from "@/components/LoadingOverlay";
 
 interface AiApproval {
   suggestion: string;
@@ -20,6 +21,11 @@ interface AiApproval {
   referenceRecords?: Array<{ ticketId: string; action: string; comment: string | null }>;
 }
 
+type PendingAction =
+  | { kind: "approve"; level: 1 | 2 }
+  | { kind: "reject"; level: 1 | 2 }
+  | { kind: "fast_release" };
+
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<Record<string, unknown> | null>(null);
@@ -29,7 +35,8 @@ export default function TicketDetailPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [confirmAction, setConfirmAction] = useState<string | null>(null);
+  const [success, setSuccess] = useState("");
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [aiApproval, setAiApproval] = useState<AiApproval | null>(null);
 
   const load = useCallback(async () => {
@@ -60,28 +67,116 @@ export default function TicketDetailPage() {
     setLoading(true);
     setError("");
     setNotice("");
+    setSuccess("");
     try {
+      const levelSuffix = extra?.level != null ? `_${extra.level}` : "";
       const res = await fetch(`/api/tickets/${id}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
           comment,
-          idempotencyKey: `${user?.id}_${action}_${id}`,
+          idempotencyKey: `${user?.id}_${action}${levelSuffix}_${id}`,
           ...extra,
         }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
+
+      if (result.duplicate) {
+        setSuccess("操作已生效（重复提交已幂等处理）");
+      } else if (action === "approve") {
+        if (result.escalated) {
+          setSuccess(`${extra?.level}级审批通过，已升级至二级审批`);
+        } else if (result.executed) {
+          setSuccess(`${extra?.level}级审批通过，联动执行已完成`);
+        } else {
+          setSuccess(`${extra?.level}级审批通过`);
+        }
+      } else if (action === "reject") {
+        setSuccess(result.closed ? "审批拒绝，工单已关闭" : "审批拒绝，工单已退回待审批");
+      } else if (action === "fast_release") {
+        setSuccess("快速放行成功，批次已解锁");
+      }
+
       if (result.amountWarning) setNotice(result.amountWarning);
-      setConfirmAction(null);
+      setPendingAction(null);
       setComment("");
+      setFastReason("");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "操作失败");
     } finally {
       setLoading(false);
     }
+  }
+
+  function confirmPendingAction() {
+    if (!pendingAction) return;
+    if (pendingAction.kind === "approve") {
+      doAction("approve", { level: pendingAction.level });
+    } else if (pendingAction.kind === "reject") {
+      doAction("reject", { level: pendingAction.level });
+    } else {
+      doAction("fast_release", { reason: fastReason });
+    }
+  }
+
+  function getModalContent() {
+    if (!pendingAction || !data?.ticket) return null;
+    const ticket = data.ticket as Record<string, unknown>;
+    const amount = (ticket.amount as number).toFixed(2);
+    const typeLabel =
+      ticket.category === "qc"
+        ? QC_TYPE_LABELS[ticket.type as string]
+        : LOGISTICS_TYPE_LABELS[ticket.type as string];
+
+    if (pendingAction.kind === "approve") {
+      const level = pendingAction.level;
+      return {
+        title: `确认${level}级审批通过`,
+        description: `确定通过该工单审批吗？通过后将进入执行流程。\n\n运单号：${ticket.waybillNo}\n异常类型：${typeLabel}\n金额：¥${amount}${comment.trim() ? `\n审批意见：${comment.trim()}` : ""}`,
+        confirmLabel: "确认通过",
+        variant: "primary" as const,
+      };
+    }
+    if (pendingAction.kind === "reject") {
+      const level = pendingAction.level;
+      return {
+        title: `确认${level}级审批拒绝`,
+        description: `确定拒绝该工单吗？拒绝后工单将退回待审批或关闭。\n\n运单号：${ticket.waybillNo}\n异常类型：${typeLabel}\n金额：¥${amount}${comment.trim() ? `\n审批意见：${comment.trim()}` : ""}`,
+        confirmLabel: "确认拒绝",
+        variant: "danger" as const,
+      };
+    }
+    return {
+      title: "确认快速放行",
+      description: `确定对该品控工单执行快速放行吗？放行后工单将直接完成。\n\n运单号：${ticket.waybillNo}\n复核原因：${fastReason.trim()}`,
+      confirmLabel: "确认放行",
+      variant: "primary" as const,
+    };
+  }
+
+  function getLoadingContent() {
+    if (!pendingAction) {
+      return { message: "审批处理中...", hint: "正在提交，请勿关闭页面" };
+    }
+    if (pendingAction.kind === "approve") {
+      return {
+        message: `${pendingAction.level}级审批通过处理中...`,
+        hint: "正在校验金额并执行联动，请稍候",
+      };
+    }
+    if (pendingAction.kind === "reject") {
+      return {
+        message: `${pendingAction.level}级审批拒绝处理中...`,
+        hint: "正在更新工单状态，请稍候",
+      };
+    }
+    return {
+      message: "快速放行处理中...",
+      hint: "正在解锁批次并完成工单，请稍候",
+    };
   }
 
   if (!data?.ticket) return <div className="py-12 text-center">加载中...</div>;
@@ -103,12 +198,16 @@ export default function TicketDetailPage() {
       ? QC_TYPE_LABELS[ticket.type as string]
       : LOGISTICS_TYPE_LABELS[ticket.type as string];
 
+  const modal = getModalContent();
+  const loadingContent = getLoadingContent();
+
   return (
     <div>
       <h1 className="page-title">工单详情</h1>
       <p className="mb-6 font-mono text-sm text-[var(--ink-soft)]">{ticket.id as string}</p>
 
       {error && <div className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {success && <div className="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700">{success}</div>}
       {notice && <div className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{notice}</div>}
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -202,22 +301,10 @@ export default function TicketDetailPage() {
             <div className="card">
               <h3 className="mb-3 font-semibold">一级审批</h3>
               <textarea className="input mb-3 min-h-[80px]" placeholder="审批意见" value={comment} onChange={(e) => setComment(e.target.value)} />
-              {confirmAction === "approve_l1" ? (
-                <div className="flex gap-2">
-                  <button className="btn-primary flex-1" disabled={loading} onClick={() => doAction("approve", { level: 1 })}>确认通过</button>
-                  <button className="btn-secondary" onClick={() => setConfirmAction(null)}>取消</button>
-                </div>
-              ) : confirmAction === "reject_l1" ? (
-                <div className="flex gap-2">
-                  <button className="btn-danger flex-1" disabled={loading} onClick={() => doAction("reject", { level: 1 })}>确认拒绝</button>
-                  <button className="btn-secondary" onClick={() => setConfirmAction(null)}>取消</button>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <button className="btn-primary flex-1" onClick={() => setConfirmAction("approve_l1")}>通过</button>
-                  <button className="btn-danger flex-1" onClick={() => setConfirmAction("reject_l1")}>拒绝</button>
-                </div>
-              )}
+              <div className="flex gap-2">
+                <button className="btn-primary flex-1" onClick={() => setPendingAction({ kind: "approve", level: 1 })}>通过</button>
+                <button className="btn-danger flex-1" onClick={() => setPendingAction({ kind: "reject", level: 1 })}>拒绝</button>
+              </div>
             </div>
           )}
 
@@ -226,8 +313,8 @@ export default function TicketDetailPage() {
               <h3 className="mb-3 font-semibold">二级审批</h3>
               <textarea className="input mb-3 min-h-[80px]" placeholder="审批意见" value={comment} onChange={(e) => setComment(e.target.value)} />
               <div className="flex gap-2">
-                <button className="btn-primary flex-1" disabled={loading} onClick={() => doAction("approve", { level: 2 })}>通过</button>
-                <button className="btn-danger flex-1" disabled={loading} onClick={() => doAction("reject", { level: 2 })}>拒绝</button>
+                <button className="btn-primary flex-1" onClick={() => setPendingAction({ kind: "approve", level: 2 })}>通过</button>
+                <button className="btn-danger flex-1" onClick={() => setPendingAction({ kind: "reject", level: 2 })}>拒绝</button>
               </div>
             </div>
           )}
@@ -238,8 +325,8 @@ export default function TicketDetailPage() {
               <textarea className="input mb-3 min-h-[80px]" placeholder="复核原因（必填）" value={fastReason} onChange={(e) => setFastReason(e.target.value)} />
               <button
                 className="btn-secondary w-full"
-                disabled={loading || !fastReason.trim()}
-                onClick={() => doAction("fast_release", { reason: fastReason })}
+                disabled={!fastReason.trim()}
+                onClick={() => setPendingAction({ kind: "fast_release" })}
               >
                 快速放行
               </button>
@@ -251,6 +338,25 @@ export default function TicketDetailPage() {
           )}
         </div>
       </div>
+
+      {modal && (
+        <ConfirmModal
+          open={!!pendingAction && !loading}
+          title={modal.title}
+          description={modal.description}
+          confirmLabel={modal.confirmLabel}
+          variant={modal.variant}
+          loading={loading}
+          onConfirm={confirmPendingAction}
+          onCancel={() => setPendingAction(null)}
+        />
+      )}
+
+      <LoadingOverlay
+        open={loading}
+        message={loadingContent.message}
+        hint={loadingContent.hint}
+      />
     </div>
   );
 }

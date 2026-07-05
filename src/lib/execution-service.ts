@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { ExceptionTicket } from "@/db/schema";
 import type { DbClient } from "./db-types";
@@ -184,7 +184,10 @@ async function unlockInventory(ticket: ExceptionTicket, approvalRecordId: string
 
   for (const item of items) {
     const existingChange = await db.query.inventoryChanges.findFirst({
-      where: eq(schema.inventoryChanges.approvalRecordId, approvalRecordId),
+      where: and(
+        eq(schema.inventoryChanges.approvalRecordId, approvalRecordId),
+        eq(schema.inventoryChanges.inventoryId, item.id)
+      ),
     });
     if (existingChange) continue;
 

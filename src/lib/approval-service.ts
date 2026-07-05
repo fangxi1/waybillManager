@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { ExceptionTicket, User } from "@/db/schema";
+import type { DbClient } from "./db-types";
 import {
   ConflictError,
   getRequiredApprovalLevel,
@@ -55,6 +56,45 @@ async function reconcileTicketAmountWithV2(ticket: ExceptionTicket) {
   return { ticket: syncedTicket, amountWarning };
 }
 
+async function findIdempotentApproval(idempotencyKey?: string) {
+  if (!idempotencyKey) return null;
+  const db = getDb();
+  return db.query.approvalRecords.findFirst({
+    where: eq(schema.approvalRecords.idempotencyKey, idempotencyKey),
+  });
+}
+
+async function unlockBatch(ticketId: string, approvalRecordId: string, dbClient?: DbClient) {
+  const db = dbClient ?? getDb();
+  const items = await db.query.inventory.findMany({
+    where: eq(schema.inventory.ticketId, ticketId),
+  });
+  for (const item of items) {
+    const existingChange = await db.query.inventoryChanges.findFirst({
+      where: and(
+        eq(schema.inventoryChanges.approvalRecordId, approvalRecordId),
+        eq(schema.inventoryChanges.inventoryId, item.id)
+      ),
+    });
+    if (existingChange) continue;
+
+    await db
+      .update(schema.inventory)
+      .set({ locked: false, lockReason: null, updatedAt: nowIso() })
+      .where(eq(schema.inventory.id, item.id));
+    await db.insert(schema.inventoryChanges).values({
+      id: newId(),
+      inventoryId: item.id,
+      ticketId,
+      approvalRecordId,
+      changeType: "unlock",
+      quantityDelta: 0,
+      reason: "批次解锁",
+      createdAt: nowIso(),
+    });
+  }
+}
+
 export async function approveTicket(params: {
   ticket: ExceptionTicket;
   approver: User;
@@ -69,22 +109,15 @@ export async function approveTicket(params: {
     throw new Error("不能审批自己提交的工单");
   }
 
-  const expectedStatus = level === 1 ? "level1_review" : "level2_review";
-  if (ticket.status !== expectedStatus && ticket.status !== "pending" && level === 1) {
-    if (ticket.status !== "level1_review") {
-      throw new ConflictError("该工单已被处理，请刷新后重试");
-    }
+  if (level === 1 && ticket.status !== "level1_review" && ticket.status !== "pending") {
+    throw new ConflictError("该工单已被处理，请刷新后重试");
   }
   if (level === 2 && ticket.status !== "level2_review") {
     throw new ConflictError("该工单已被处理，请刷新后重试");
   }
 
-  if (idempotencyKey) {
-    const existing = await db.query.approvalRecords.findFirst({
-      where: eq(schema.approvalRecords.idempotencyKey, idempotencyKey),
-    });
-    if (existing) return { ticket, approvalId: existing.id, duplicate: true };
-  }
+  const existing = await findIdempotentApproval(idempotencyKey);
+  if (existing) return { ticket, approvalId: existing.id, duplicate: true };
 
   const { ticket: syncedTicket, amountWarning } = await reconcileTicketAmountWithV2(ticket);
   const approvalComment = amountWarning ? `${comment}\n[系统] ${amountWarning}` : comment;
@@ -93,30 +126,35 @@ export async function approveTicket(params: {
 
   if (level === 1 && requiredLevel === 2) {
     const approvalId = newId();
-    await db.insert(schema.approvalRecords).values({
-      id: approvalId,
-      ticketId: syncedTicket.id,
-      approverId: approver.id,
-      level: 1,
-      action: "approve",
-      comment: approvalComment,
-      idempotencyKey,
-      createdAt: nowIso(),
-    });
+    const updated = await db.transaction(async (tx) => {
+      await tx.insert(schema.approvalRecords).values({
+        id: approvalId,
+        ticketId: syncedTicket.id,
+        approverId: approver.id,
+        level: 1,
+        action: "approve",
+        comment: approvalComment,
+        idempotencyKey,
+        createdAt: nowIso(),
+      });
 
-    const updated = await transitionTicket(
-      syncedTicket,
-      "level2_review",
-      approver.id,
-      amountWarning
-        ? "一级审批通过，金额超阈值升级二级审批（审批前已同步 V2 金额）"
-        : "一级审批通过，金额超阈值升级二级审批"
-    );
-    const deadline = await setApprovalDeadline(updated, 2);
-    await db
-      .update(schema.exceptionTickets)
-      .set({ deadlineAt: deadline, assigneeId: null })
-      .where(eq(schema.exceptionTickets.id, syncedTicket.id));
+      const transitioned = await transitionTicket(
+        syncedTicket,
+        "level2_review",
+        approver.id,
+        amountWarning
+          ? "一级审批通过，金额超阈值升级二级审批（审批前已同步 V2 金额）"
+          : "一级审批通过，金额超阈值升级二级审批",
+        undefined,
+        tx
+      );
+      const deadline = await setApprovalDeadline(transitioned, 2);
+      await tx
+        .update(schema.exceptionTickets)
+        .set({ deadlineAt: deadline, assigneeId: null })
+        .where(eq(schema.exceptionTickets.id, syncedTicket.id));
+      return transitioned;
+    });
 
     return { ticket: updated, approvalId, escalated: true, amountWarning };
   }
@@ -162,44 +200,72 @@ export async function rejectTicket(params: {
     throw new Error("不能审批自己提交的工单");
   }
 
-  if (idempotencyKey) {
-    const existing = await db.query.approvalRecords.findFirst({
-      where: eq(schema.approvalRecords.idempotencyKey, idempotencyKey),
-    });
-    if (existing) return { ticket, approvalId: existing.id, duplicate: true };
-  }
+  const existing = await findIdempotentApproval(idempotencyKey);
+  if (existing) return { ticket, approvalId: existing.id, duplicate: true };
 
   const maxResubmit = await getConfigNumber("resubmit_max_count");
   const approvalId = newId();
 
-  await db.insert(schema.approvalRecords).values({
-    id: approvalId,
-    ticketId: ticket.id,
-    approverId: approver.id,
-    level,
-    action: "reject",
-    comment,
-    idempotencyKey,
-    createdAt: nowIso(),
-  });
-
   if (ticket.resubmitCount >= maxResubmit) {
-    const updated = await transitionTicket(ticket, "rejected_closed", approver.id, "超过重提次数上限，工单关闭");
-    if (ticket.holdStatus === "held") {
-      await unlockBatch(ticket.id);
-    }
+    const updated = await db.transaction(async (tx) => {
+      await tx.insert(schema.approvalRecords).values({
+        id: approvalId,
+        ticketId: ticket.id,
+        approverId: approver.id,
+        level,
+        action: "reject",
+        comment,
+        idempotencyKey,
+        createdAt: nowIso(),
+      });
+
+      const closed = await transitionTicket(
+        ticket,
+        "rejected_closed",
+        approver.id,
+        "超过重提次数上限，工单关闭",
+        undefined,
+        tx
+      );
+      if (ticket.holdStatus === "held") {
+        await unlockBatch(ticket.id, approvalId, tx);
+        await tx
+          .update(schema.exceptionTickets)
+          .set({ holdStatus: "released" })
+          .where(eq(schema.exceptionTickets.id, ticket.id));
+      }
+      return closed;
+    });
     return { ticket: updated, approvalId, closed: true };
   }
 
-  const updated = await transitionTicket(ticket, "pending", approver.id, "审批拒绝，退回待审批", {
-    resubmitCount: ticket.resubmitCount + 1,
-    assigneeId: null,
+  const updated = await db.transaction(async (tx) => {
+    await tx.insert(schema.approvalRecords).values({
+      id: approvalId,
+      ticketId: ticket.id,
+      approverId: approver.id,
+      level,
+      action: "reject",
+      comment,
+      idempotencyKey,
+      createdAt: nowIso(),
+    });
+
+    const resubmitted = await transitionTicket(
+      ticket,
+      "pending",
+      approver.id,
+      "审批拒绝，退回待审批",
+      { resubmitCount: ticket.resubmitCount + 1, assigneeId: null },
+      tx
+    );
+    const deadline = await setApprovalDeadline(resubmitted, 1);
+    await tx
+      .update(schema.exceptionTickets)
+      .set({ deadlineAt: deadline })
+      .where(eq(schema.exceptionTickets.id, ticket.id));
+    return resubmitted;
   });
-  const deadline = await setApprovalDeadline(updated, 1);
-  await db
-    .update(schema.exceptionTickets)
-    .set({ deadlineAt: deadline })
-    .where(eq(schema.exceptionTickets.id, ticket.id));
 
   return { ticket: updated, approvalId, resubmitted: true };
 }
@@ -208,63 +274,57 @@ export async function fastReleaseTicket(params: {
   ticket: ExceptionTicket;
   supervisor: User;
   reason: string;
+  idempotencyKey?: string;
 }) {
-  const { ticket, supervisor, reason } = params;
+  const { ticket, supervisor, reason, idempotencyKey } = params;
   const db = getDb();
 
   if (ticket.category !== "qc") {
     throw new Error("仅品控工单支持快速放行");
   }
 
+  if (ticket.status === "completed" || ticket.holdStatus === "fast_released") {
+    const prior = await db.query.approvalRecords.findFirst({
+      where: eq(schema.approvalRecords.ticketId, ticket.id),
+    });
+    return { ticket, approvalId: prior?.id || "", duplicate: true };
+  }
+
+  const existing = await findIdempotentApproval(idempotencyKey);
+  if (existing) return { ticket, approvalId: existing.id, duplicate: true };
+
   const approvalId = newId();
-  await db.insert(schema.approvalRecords).values({
-    id: approvalId,
-    ticketId: ticket.id,
-    approverId: supervisor.id,
-    level: 0,
-    action: "fast_release",
-    comment: reason,
-    createdAt: nowIso(),
-  });
 
-  await unlockBatch(ticket.id);
-
-  const updated = await transitionTicket(ticket, "completed", supervisor.id, `品控主管误判快速放行: ${reason}`, {
-    holdStatus: "fast_released",
-    completedAt: nowIso(),
-  });
-
-  await db
-    .update(schema.scanRecords)
-    .set({ batchStatus: "released" })
-    .where(eq(schema.scanRecords.ticketId, ticket.id));
-
-  return { ticket: updated, approvalId };
-}
-
-async function unlockBatch(ticketId: string) {
-  const db = getDb();
-  const items = await db.query.inventory.findMany({
-    where: eq(schema.inventory.ticketId, ticketId),
-  });
-  for (const item of items) {
-    await db
-      .update(schema.inventory)
-      .set({ locked: false, lockReason: null, updatedAt: nowIso() })
-      .where(eq(schema.inventory.id, item.id));
-    await db.insert(schema.inventoryChanges).values({
-      id: newId(),
-      inventoryId: item.id,
-      ticketId,
-      approvalRecordId: "fast_release",
-      changeType: "unlock",
-      quantityDelta: 0,
-      reason: "批次解锁",
+  const updated = await db.transaction(async (tx) => {
+    await tx.insert(schema.approvalRecords).values({
+      id: approvalId,
+      ticketId: ticket.id,
+      approverId: supervisor.id,
+      level: 0,
+      action: "fast_release",
+      comment: reason,
+      idempotencyKey,
       createdAt: nowIso(),
     });
-  }
-  await db
-    .update(schema.exceptionTickets)
-    .set({ holdStatus: "released" })
-    .where(eq(schema.exceptionTickets.id, ticketId));
+
+    await unlockBatch(ticket.id, approvalId, tx);
+
+    const completed = await transitionTicket(
+      ticket,
+      "completed",
+      supervisor.id,
+      `品控主管误判快速放行: ${reason}`,
+      { holdStatus: "fast_released", completedAt: nowIso() },
+      tx
+    );
+
+    await tx
+      .update(schema.scanRecords)
+      .set({ batchStatus: "released" })
+      .where(eq(schema.scanRecords.ticketId, ticket.id));
+
+    return completed;
+  });
+
+  return { ticket: updated, approvalId };
 }

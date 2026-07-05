@@ -116,7 +116,8 @@ export async function processScan(params: {
   }
 
   const ticketId = newId();
-  const amount = waybillResult.data.amount;
+  const waybill = waybillResult.data!;
+  const amount = waybill.amount;
   const requiredLevel = await getRequiredApprovalLevel(amount);
   const initialStatus = requiredLevel === 2 ? "level2_review" : "level1_review";
   const deadline = await setApprovalDeadline(
@@ -127,75 +128,77 @@ export async function processScan(params: {
   const now = nowIso();
 
   const invId = newId();
-  await db.insert(schema.inventory).values({
-    id: invId,
-    sku,
-    batchId,
-    waybillNo,
-    quantity: actualQuantity,
-    locked: true,
-    lockReason: "品控暂扣",
-    ticketId,
-    warehouseId: waybillResult.data.warehouseId,
-    updatedAt: now,
-  });
+  await db.transaction(async (tx) => {
+    await tx.insert(schema.inventory).values({
+      id: invId,
+      sku,
+      batchId,
+      waybillNo,
+      quantity: actualQuantity,
+      locked: true,
+      lockReason: "品控暂扣",
+      ticketId,
+      warehouseId: waybill.warehouseId,
+      updatedAt: now,
+    });
 
-  await db.insert(schema.exceptionTickets).values({
-    id: ticketId,
-    waybillNo,
-    category: "qc",
-    type: qc.subType || "appearance_damage",
-    source: "scan",
-    status: initialStatus,
-    description: qc.reason,
-    amount,
-    reporterId: operator.id,
-    assigneeId: null,
-    resubmitCount: 0,
-    version: 1,
-    sku,
-    batchId,
-    holdStatus: "held",
-    deadlineAt: deadline,
-    holdDeadlineAt: holdDeadline,
-    createdAt: now,
-    updatedAt: now,
-  });
+    await tx.insert(schema.exceptionTickets).values({
+      id: ticketId,
+      waybillNo,
+      category: "qc",
+      type: qc.subType || "appearance_damage",
+      source: "scan",
+      status: initialStatus,
+      description: qc.reason,
+      amount,
+      reporterId: operator.id,
+      assigneeId: null,
+      resubmitCount: 0,
+      version: 1,
+      sku,
+      batchId,
+      holdStatus: "held",
+      deadlineAt: deadline,
+      holdDeadlineAt: holdDeadline,
+      createdAt: now,
+      updatedAt: now,
+    });
 
-  await recordStatusChange(ticketId, null, initialStatus, operator.id, "扫描异常自动创建工单");
+    await recordStatusChange(ticketId, null, initialStatus, operator.id, "扫描异常自动创建工单", tx);
+
+    await tx.insert(schema.scanRecords).values({
+      id: scanId,
+      waybillNo,
+      sku,
+      batchId,
+      operatorId: operator.id,
+      deviceId: deviceId || null,
+      qcResult: "fail",
+      qcDescription: qc.reason,
+      hitRuleId: qc.hitRule?.id || null,
+      hitRuleReason: qc.reason,
+      batchStatus: "held",
+      ticketId,
+      createdAt: now,
+    });
+
+    await tx.insert(schema.inventoryChanges).values({
+      id: newId(),
+      inventoryId: invId,
+      ticketId,
+      approvalRecordId: "scan_lock",
+      changeType: "lock",
+      quantityDelta: 0,
+      reason: `品控暂扣锁定，命中规则: ${qc.hitRule?.name || "未知"}`,
+      createdAt: now,
+    });
+  });
 
   writebackExceptionFlag(waybillNo, {
     hasOpenException: true,
     ticketId,
     status: initialStatus,
   }).catch(() => {});
-
-  await db.insert(schema.scanRecords).values({
-    id: scanId,
-    waybillNo,
-    sku,
-    batchId,
-    operatorId: operator.id,
-    deviceId: deviceId || null,
-    qcResult: "fail",
-    qcDescription: qc.reason,
-    hitRuleId: qc.hitRule?.id || null,
-    hitRuleReason: qc.reason,
-    batchStatus: "held",
-    ticketId,
-    createdAt: now,
-  });
-
-  await db.insert(schema.inventoryChanges).values({
-    id: newId(),
-    inventoryId: invId,
-    ticketId,
-    approvalRecordId: "scan_lock",
-    changeType: "lock",
-    quantityDelta: 0,
-    reason: `品控暂扣锁定，命中规则: ${qc.hitRule?.name || "未知"}`,
-    createdAt: now,
-  });
 
   return {
     pass: false,
