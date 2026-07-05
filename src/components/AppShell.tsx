@@ -87,13 +87,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </select>
           </div>
         </div>
-        <div className="hidden border-t border-white/15 px-5 md:flex md:justify-end md:gap-8">
-          <span className="border-b-2 border-white py-2.5 text-sm font-medium text-white">
-            应用中心
-          </span>
-          <span className="py-2.5 text-sm text-white/70">报表中心</span>
-          <span className="py-2.5 text-sm text-white/70">系统管理</span>
-        </div>
       </header>
 
       <div className="flex flex-1 flex-col md:flex-row">
