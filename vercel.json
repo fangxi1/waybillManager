@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/timeout",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-waybills",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
