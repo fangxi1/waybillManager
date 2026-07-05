@@ -76,6 +76,14 @@ body {
   @apply rounded-md border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--ink-soft)] transition hover:bg-[var(--accent-tint)] disabled:opacity-50;
 }
 
+.btn-ai {
+  @apply rounded-md border border-[var(--accent)] bg-[var(--accent-tint)] px-4 py-2 text-sm font-medium text-[var(--accent-dark)] transition hover:bg-[var(--accent)] hover:text-white disabled:opacity-50;
+}
+
+.btn-ai-idle {
+  @apply border-dashed border-[var(--accent)]/60 bg-white text-[var(--accent-dark)] hover:bg-[var(--accent-tint)];
+}
+
 .btn-danger {
   @apply rounded-md bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 disabled:opacity-50;
 }

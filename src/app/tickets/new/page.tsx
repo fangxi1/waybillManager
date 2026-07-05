@@ -20,11 +20,16 @@ export default function NewTicketPage() {
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<ClassifyResult | null>(null);
+  const [aiHint, setAiHint] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ waybillSource?: string; warning?: string } | null>(null);
 
   async function runAiClassify() {
-    if (!form.description.trim()) return;
+    if (!form.description.trim()) {
+      setAiHint("请先填写上方「异常描述」，AI 将根据描述推荐异常类型");
+      return;
+    }
+    setAiHint("");
     setAiLoading(true);
     try {
       const res = await fetch("/api/ai/classify", {
@@ -33,10 +38,14 @@ export default function NewTicketPage() {
         body: JSON.stringify({ description: form.description, category: "logistics" }),
       });
       const data = await res.json();
-      if (res.ok) {
-        setAiResult(data);
-        setForm((f) => ({ ...f, type: data.suggestedType }));
+      if (!res.ok) {
+        setAiHint(data.error || "AI 分类失败，请稍后重试");
+        return;
       }
+      setAiResult(data);
+      setForm((f) => ({ ...f, type: data.suggestedType }));
+    } catch {
+      setAiHint("网络异常，请稍后重试");
     } finally {
       setAiLoading(false);
     }
@@ -83,16 +92,20 @@ export default function NewTicketPage() {
             className="input min-h-[100px]"
             placeholder="请描述异常情况..."
             value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
+            onChange={(e) => {
+              setForm({ ...form, description: e.target.value });
+              if (e.target.value.trim()) setAiHint("");
+            }}
           />
           <button
             type="button"
-            className="btn-secondary mt-2 text-xs"
-            disabled={aiLoading || !form.description.trim()}
+            className={`btn-ai mt-2 text-xs ${!form.description.trim() && !aiLoading ? "btn-ai-idle" : ""}`}
+            disabled={aiLoading}
             onClick={runAiClassify}
           >
             {aiLoading ? "AI 分析中..." : "🤖 AI 辅助分类"}
           </button>
+          {aiHint && <p className="mt-1.5 text-xs text-amber-700">{aiHint}</p>}
         </div>
 
         {aiResult && (

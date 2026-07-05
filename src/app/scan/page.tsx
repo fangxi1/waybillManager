@@ -50,10 +50,16 @@ export default function ScanPage() {
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<ClassifyResult | null>(null);
+  const [aiHint, setAiHint] = useState("");
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState("");
 
   async function runAiClassify() {
+    if (!form.waybillNo.trim() || !form.sku.trim()) {
+      setAiHint("请先填写运单号和 SKU，AI 将根据扫描数据推荐品控子类型");
+      return;
+    }
+    setAiHint("");
     const description = buildScanDescription(form);
     setAiLoading(true);
     try {
@@ -63,7 +69,13 @@ export default function ScanPage() {
         body: JSON.stringify({ description, category: "qc" }),
       });
       const data = await res.json();
-      if (res.ok) setAiResult(data);
+      if (!res.ok) {
+        setAiHint(data.error || "AI 分类失败，请稍后重试");
+        return;
+      }
+      setAiResult(data);
+    } catch {
+      setAiHint("网络异常，请稍后重试");
     } finally {
       setAiLoading(false);
     }
@@ -149,12 +161,13 @@ export default function ScanPage() {
 
         <button
           type="button"
-          className="btn-secondary w-full text-xs"
-          disabled={aiLoading || !form.waybillNo || !form.sku}
+          className={`btn-ai w-full text-xs ${(!form.waybillNo.trim() || !form.sku.trim()) && !aiLoading ? "btn-ai-idle" : ""}`}
+          disabled={aiLoading}
           onClick={runAiClassify}
         >
           {aiLoading ? "AI 分析中..." : "🤖 AI 辅助判定品控子类型"}
         </button>
+        {aiHint && <p className="text-xs text-amber-700">{aiHint}</p>}
 
         {aiResult && (
           <AiSuggestionCard
