@@ -1,6 +1,8 @@
 import { and, eq, inArray, not } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { ExceptionTicket } from "@/db/schema";
+import type { DbClient } from "./db-types";
+import { sendDingTalkAlert } from "./notify-service";
 import { getConfigNumber, addHours, newId, nowIso } from "./utils";
 
 type OpenTicketStatus = "pending" | "level1_review" | "level2_review" | "executing" | "escalated";
@@ -29,9 +31,10 @@ export async function recordStatusChange(
   fromStatus: string | null,
   toStatus: string,
   operatorId: string | null,
-  reason: string
+  reason: string,
+  dbClient?: DbClient
 ) {
-  const db = getDb();
+  const db = dbClient ?? getDb();
   await db.insert(schema.ticketStatusHistory).values({
     id: newId(),
     ticketId,
@@ -48,9 +51,10 @@ export async function transitionTicket(
   toStatus: ExceptionTicket["status"],
   operatorId: string | null,
   reason: string,
-  extra?: Partial<typeof schema.exceptionTickets.$inferInsert>
+  extra?: Partial<typeof schema.exceptionTickets.$inferInsert>,
+  dbClient?: DbClient
 ) {
-  const db = getDb();
+  const db = dbClient ?? getDb();
   const now = nowIso();
 
   const [updated] = await db
@@ -73,7 +77,7 @@ export async function transitionTicket(
     throw new ConflictError("该工单已被处理，请刷新后重试");
   }
 
-  await recordStatusChange(ticket.id, ticket.status, toStatus, operatorId, reason);
+  await recordStatusChange(ticket.id, ticket.status, toStatus, operatorId, reason, db);
   return updated;
 }
 
@@ -207,6 +211,10 @@ export async function processTimeouts() {
         .set({ deadlineAt: deadline, assigneeId: null })
         .where(eq(schema.exceptionTickets.id, ticket.id));
       processed++;
+      void sendDingTalkAlert(
+        "工单审批超时升级",
+        `工单 **${ticket.id.slice(0, 8)}** 已自动升级至二级审批\n运单号: ${ticket.waybillNo}`
+      );
     } else if (ticket.status === "level2_review") {
       await transitionTicket(ticket, "rejected_closed", null, "二级审批超时，自动驳回关闭");
       await db.insert(schema.approvalRecords).values({
@@ -225,6 +233,10 @@ export async function processTimeouts() {
           .where(eq(schema.inventory.ticketId, ticket.id));
       }
       processed++;
+      void sendDingTalkAlert(
+        "工单审批超时关闭",
+        `工单 **${ticket.id.slice(0, 8)}** 二级审批超时，已自动驳回关闭\n运单号: ${ticket.waybillNo}`
+      );
     }
   }
 
@@ -261,6 +273,10 @@ export async function processTimeouts() {
       .set({ deadlineAt: deadline })
       .where(eq(schema.exceptionTickets.id, ticket.id));
     processed++;
+    void sendDingTalkAlert(
+      "品控暂扣超时升级",
+      `工单 **${ticket.id.slice(0, 8)}** 品控暂扣超时，已强制升级二级审批\n运单号: ${ticket.waybillNo}`
+    );
   }
 
   await reassignDisabledApproverTickets();

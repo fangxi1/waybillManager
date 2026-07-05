@@ -122,24 +122,29 @@ export async function approveTicket(params: {
   }
 
   const approvalId = newId();
-  await db.insert(schema.approvalRecords).values({
-    id: approvalId,
-    ticketId: syncedTicket.id,
-    approverId: approver.id,
-    level,
-    action: "approve",
-    comment: approvalComment,
-    idempotencyKey,
-    createdAt: nowIso(),
+  const result = await db.transaction(async (tx) => {
+    await tx.insert(schema.approvalRecords).values({
+      id: approvalId,
+      ticketId: syncedTicket.id,
+      approverId: approver.id,
+      level,
+      action: "approve",
+      comment: approvalComment,
+      idempotencyKey,
+      createdAt: nowIso(),
+    });
+
+    const updated = await transitionTicket(
+      syncedTicket,
+      "executing",
+      approver.id,
+      `${level}级审批通过，开始执行`,
+      undefined,
+      tx
+    );
+    return executeApprovedAction(updated, approvalId, tx);
   });
 
-  const updated = await transitionTicket(
-    syncedTicket,
-    "executing",
-    approver.id,
-    `${level}级审批通过，开始执行`
-  );
-  const result = await executeApprovedAction(updated, approvalId);
   return { ticket: result.ticket, approvalId, executed: true, amountWarning };
 }
 

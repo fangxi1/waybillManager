@@ -1,6 +1,39 @@
 "use client";
 
 import { useState } from "react";
+import { QC_TYPES, QC_TYPE_LABELS } from "@/lib/constants";
+import { AiSuggestionCard } from "@/components/AiSuggestionCard";
+
+interface ClassifyResult {
+  suggestedType: string;
+  typeLabel: string;
+  severity: string;
+  confidence: number;
+  reasoning: string;
+  source: "ai" | "rule_based";
+}
+
+function buildScanDescription(form: {
+  waybillNo: string;
+  sku: string;
+  batchId: string;
+  expectedQuantity: number;
+  actualQuantity: number;
+  damageLevel: number;
+  specDeviation: number;
+  labelMismatch: boolean;
+  batchInvalid: boolean;
+}) {
+  const parts = [
+    `运单 ${form.waybillNo}，SKU ${form.sku}，批次 ${form.batchId}`,
+    `预期数量 ${form.expectedQuantity}，实际 ${form.actualQuantity}`,
+  ];
+  if (form.damageLevel > 0) parts.push(`破损等级 ${form.damageLevel}`);
+  if (form.specDeviation > 0) parts.push(`规格偏差 ${form.specDeviation}%`);
+  if (form.labelMismatch) parts.push("标签错误");
+  if (form.batchInvalid) parts.push("批次异常");
+  return parts.join("；");
+}
 
 export default function ScanPage() {
   const [form, setForm] = useState({
@@ -15,8 +48,26 @@ export default function ScanPage() {
     batchInvalid: false,
   });
   const [loading, setLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<ClassifyResult | null>(null);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState("");
+
+  async function runAiClassify() {
+    const description = buildScanDescription(form);
+    setAiLoading(true);
+    try {
+      const res = await fetch("/api/ai/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description, category: "qc" }),
+      });
+      const data = await res.json();
+      if (res.ok) setAiResult(data);
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   async function submit() {
     setLoading(true);
@@ -96,6 +147,33 @@ export default function ScanPage() {
           </label>
         </div>
 
+        <button
+          type="button"
+          className="btn-secondary w-full text-xs"
+          disabled={aiLoading || !form.waybillNo || !form.sku}
+          onClick={runAiClassify}
+        >
+          {aiLoading ? "AI 分析中..." : "🤖 AI 辅助判定品控子类型"}
+        </button>
+
+        {aiResult && (
+          <AiSuggestionCard
+            title="品控异常 AI 建议"
+            reasoning={aiResult.reasoning}
+            confidence={aiResult.confidence}
+            source={aiResult.source}
+            extra={
+              <p className="mt-2">
+                建议子类型：<strong>{aiResult.typeLabel}</strong>（{aiResult.suggestedType}）
+                · 严重度：{aiResult.severity}
+                <span className="mt-1 block text-xs">
+                  实际子类型由品控规则引擎扫描时自动判定，AI 结果仅供参考
+                </span>
+              </p>
+            }
+          />
+        )}
+
         {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         {result && (
           <div className={`rounded-lg p-3 text-sm ${result.pass ? "bg-green-50 text-green-700" : result.duplicate ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700"}`}>
@@ -116,7 +194,7 @@ export default function ScanPage() {
           <li>运单号 = V2 的 <code>externalCode</code>（外部编码/配送单号）</li>
           <li>SKU = V2 的 <code>skuCode</code>（SKU物品编码）</li>
           <li>请先在 V2 系统导入订单，再在 V3 扫描</li>
-          <li>实际数量与预期差异过大 → 触发品控规则</li>
+          <li>实际数量与预期差异过大 → 触发品控规则（{QC_TYPES.map((t) => QC_TYPE_LABELS[t]).join("、")}）</li>
         </ul>
       </div>
     </div>

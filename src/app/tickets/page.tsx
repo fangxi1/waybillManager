@@ -44,8 +44,20 @@ export default function TicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState({ status: "", category: "", waybillNo: "" });
+  const [filters, setFilters] = useState({ status: "", category: "", waybillNo: "", assigneeId: "" });
+  const [approvers, setApprovers] = useState<Array<{ id: string; name: string; role: string }>>([]);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((r) => r.json())
+      .then((d) => {
+        const list = (d.users || []).filter((u: { role: string }) =>
+          ["approver_l1", "approver_l2"].includes(u.role)
+        );
+        setApprovers(list);
+      });
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,6 +65,7 @@ export default function TicketsPage() {
     if (filters.status) qs.set("status", filters.status);
     if (filters.category) qs.set("category", filters.category);
     if (filters.waybillNo) qs.set("waybillNo", filters.waybillNo);
+    if (filters.assigneeId) qs.set("assigneeId", filters.assigneeId);
 
     const res = await fetch(`/api/tickets?${qs}`);
     const data = await res.json();
@@ -94,6 +107,18 @@ export default function TicketsPage() {
           onChange={(e) => setFilters({ ...filters, waybillNo: e.target.value })}
           onKeyDown={(e) => e.key === "Enter" && (setPage(1), load())}
         />
+        <select
+          className="input w-auto"
+          value={filters.assigneeId}
+          onChange={(e) => { setFilters({ ...filters, assigneeId: e.target.value }); setPage(1); }}
+        >
+          <option value="">全部审批人</option>
+          {approvers.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name} ({u.role === "approver_l1" ? "一级" : "二级"})
+            </option>
+          ))}
+        </select>
         <button className="btn-primary" onClick={() => { setPage(1); load(); }}>筛选</button>
       </div>
 

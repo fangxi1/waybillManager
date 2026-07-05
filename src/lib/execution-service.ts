@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { ExceptionTicket } from "@/db/schema";
+import type { DbClient } from "./db-types";
 import { transitionTicket } from "./ticket-service";
 import { newId, nowIso } from "./utils";
 
@@ -24,13 +25,17 @@ const LOGISTICS_ACTION_MAP: Record<string, ExecutionAction> = {
 const QC_ACTION_MAP: Record<string, ExecutionAction> = {
   quantity_mismatch: "return_supplier",
   appearance_damage: "return_supplier",
-  spec_mismatch: "return_supplier",
+  spec_mismatch: "downgrade",
   label_error: "release",
   batch_anomaly: "repurchase",
 };
 
-export async function executeApprovedAction(ticket: ExceptionTicket, approvalRecordId: string) {
-  const db = getDb();
+export async function executeApprovedAction(
+  ticket: ExceptionTicket,
+  approvalRecordId: string,
+  dbClient?: DbClient
+) {
+  const db = dbClient ?? getDb();
   const action =
     ticket.category === "logistics"
       ? LOGISTICS_ACTION_MAP[ticket.type] || "claim"
@@ -38,39 +43,46 @@ export async function executeApprovedAction(ticket: ExceptionTicket, approvalRec
 
   switch (action) {
     case "claim":
-      await createCompensation(ticket, approvalRecordId, "to_customer", ticket.amount * 0.8);
+      await createCompensation(ticket, approvalRecordId, "to_customer", ticket.amount * 0.8, db);
       break;
     case "reship":
-      await adjustInventory(ticket, approvalRecordId, "deduct", -1, "重新发货扣减库存");
+      await adjustInventory(ticket, approvalRecordId, "deduct", -1, "重新发货扣减库存", db);
       break;
     case "return_stock":
-      await adjustInventory(ticket, approvalRecordId, "add", 1, "退货入库");
+      await adjustInventory(ticket, approvalRecordId, "add", 1, "退货入库", db);
       break;
     case "release":
-      await unlockInventory(ticket, approvalRecordId);
+      await unlockInventory(ticket, approvalRecordId, db);
       break;
     case "return_supplier":
-      await createCompensation(ticket, approvalRecordId, "from_supplier", ticket.amount * 0.5);
-      await adjustInventory(ticket, approvalRecordId, "return", 1, "退回供应商");
+      await createCompensation(ticket, approvalRecordId, "from_supplier", ticket.amount * 0.5, db);
+      await adjustInventory(ticket, approvalRecordId, "return", 1, "退回供应商", db);
       break;
     case "repurchase":
-      await createCompensation(ticket, approvalRecordId, "from_supplier", ticket.amount * 0.6);
-      await adjustInventory(ticket, approvalRecordId, "deduct", -1, "批次作废重采购");
+      await createCompensation(ticket, approvalRecordId, "from_supplier", ticket.amount * 0.6, db);
+      await adjustInventory(ticket, approvalRecordId, "deduct", -1, "批次作废重采购", db);
       break;
     case "downgrade":
-      await createCompensation(ticket, approvalRecordId, "from_supplier", ticket.amount * 0.2);
-      await unlockInventory(ticket, approvalRecordId);
+      await createCompensation(ticket, approvalRecordId, "from_supplier", ticket.amount * 0.2, db);
+      await unlockInventory(ticket, approvalRecordId, db);
       break;
   }
 
   if (ticket.holdStatus === "held") {
-    await unlockInventory(ticket, approvalRecordId);
+    await unlockInventory(ticket, approvalRecordId, db);
   }
 
-  const completed = await transitionTicket(ticket, "completed", null, `执行完成: ${action}`, {
-    completedAt: nowIso(),
-    holdStatus: ticket.holdStatus === "held" ? "released" : ticket.holdStatus,
-  });
+  const completed = await transitionTicket(
+    ticket,
+    "completed",
+    null,
+    `执行完成: ${action}`,
+    {
+      completedAt: nowIso(),
+      holdStatus: ticket.holdStatus === "held" ? "released" : ticket.holdStatus,
+    },
+    db
+  );
 
   if (ticket.category === "qc") {
     await db
@@ -86,9 +98,9 @@ async function createCompensation(
   ticket: ExceptionTicket,
   approvalRecordId: string,
   direction: "to_customer" | "from_supplier",
-  amount: number
+  amount: number,
+  db: DbClient
 ) {
-  const db = getDb();
   const existing = await db.query.compensationRecords.findFirst({
     where: eq(schema.compensationRecords.approvalRecordId, approvalRecordId),
   });
@@ -115,9 +127,9 @@ async function adjustInventory(
   approvalRecordId: string,
   changeType: "deduct" | "add" | "return",
   delta: number,
-  reason: string
+  reason: string,
+  db: DbClient
 ) {
-  const db = getDb();
   if (!ticket.sku) return;
 
   let inv = await db.query.inventory.findFirst({
@@ -165,8 +177,7 @@ async function adjustInventory(
   });
 }
 
-async function unlockInventory(ticket: ExceptionTicket, approvalRecordId: string) {
-  const db = getDb();
+async function unlockInventory(ticket: ExceptionTicket, approvalRecordId: string, db: DbClient) {
   const items = await db.query.inventory.findMany({
     where: eq(schema.inventory.ticketId, ticket.id),
   });
