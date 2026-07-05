@@ -9,7 +9,51 @@ import {
   transitionTicket,
 } from "./ticket-service";
 import { executeApprovedAction } from "./execution-service";
+import { getWaybill } from "./v2-client";
 import { newId, nowIso, getConfigNumber } from "./utils";
+
+const AMOUNT_DIFF_LOG_THRESHOLD_PCT = 10;
+
+async function reconcileTicketAmountWithV2(ticket: ExceptionTicket) {
+  const waybillResult = await getWaybill(ticket.waybillNo, true);
+  if (!waybillResult.data) {
+    return { ticket, amountWarning: undefined as string | undefined };
+  }
+
+  const liveAmount = waybillResult.data.amount;
+  const originalAmount = ticket.amount;
+  if (Math.abs(liveAmount - originalAmount) < 0.01) {
+    return { ticket, amountWarning: undefined as string | undefined };
+  }
+
+  const diffPct =
+    originalAmount > 0
+      ? (Math.abs(liveAmount - originalAmount) / originalAmount) * 100
+      : 100;
+
+  const db = getDb();
+  const [updated] = await db
+    .update(schema.exceptionTickets)
+    .set({ amount: liveAmount, updatedAt: nowIso() })
+    .where(eq(schema.exceptionTickets.id, ticket.id))
+    .returning();
+
+  const syncedTicket = updated || ticket;
+  let amountWarning: string | undefined;
+
+  if (diffPct > AMOUNT_DIFF_LOG_THRESHOLD_PCT) {
+    amountWarning = `V2运单金额与工单创建时不一致：创建时 ¥${originalAmount.toFixed(2)}，V2实时 ¥${liveAmount.toFixed(2)}（差异 ${diffPct.toFixed(1)}%），已以 V2 为准更新，建议人工复核`;
+    await recordStatusChange(
+      ticket.id,
+      ticket.status,
+      ticket.status,
+      null,
+      amountWarning
+    );
+  }
+
+  return { ticket: syncedTicket, amountWarning };
+}
 
 export async function approveTicket(params: {
   ticket: ExceptionTicket;
@@ -42,51 +86,61 @@ export async function approveTicket(params: {
     if (existing) return { ticket, approvalId: existing.id, duplicate: true };
   }
 
-  const requiredLevel = await getRequiredApprovalLevel(ticket.amount);
+  const { ticket: syncedTicket, amountWarning } = await reconcileTicketAmountWithV2(ticket);
+  const approvalComment = amountWarning ? `${comment}\n[系统] ${amountWarning}` : comment;
+
+  const requiredLevel = await getRequiredApprovalLevel(syncedTicket.amount);
 
   if (level === 1 && requiredLevel === 2) {
     const approvalId = newId();
     await db.insert(schema.approvalRecords).values({
       id: approvalId,
-      ticketId: ticket.id,
+      ticketId: syncedTicket.id,
       approverId: approver.id,
       level: 1,
       action: "approve",
-      comment,
+      comment: approvalComment,
       idempotencyKey,
       createdAt: nowIso(),
     });
 
     const updated = await transitionTicket(
-      ticket,
+      syncedTicket,
       "level2_review",
       approver.id,
-      "一级审批通过，金额超阈值升级二级审批"
+      amountWarning
+        ? "一级审批通过，金额超阈值升级二级审批（审批前已同步 V2 金额）"
+        : "一级审批通过，金额超阈值升级二级审批"
     );
     const deadline = await setApprovalDeadline(updated, 2);
     await db
       .update(schema.exceptionTickets)
       .set({ deadlineAt: deadline, assigneeId: null })
-      .where(eq(schema.exceptionTickets.id, ticket.id));
+      .where(eq(schema.exceptionTickets.id, syncedTicket.id));
 
-    return { ticket: updated, approvalId, escalated: true };
+    return { ticket: updated, approvalId, escalated: true, amountWarning };
   }
 
   const approvalId = newId();
   await db.insert(schema.approvalRecords).values({
     id: approvalId,
-    ticketId: ticket.id,
+    ticketId: syncedTicket.id,
     approverId: approver.id,
     level,
     action: "approve",
-    comment,
+    comment: approvalComment,
     idempotencyKey,
     createdAt: nowIso(),
   });
 
-  const updated = await transitionTicket(ticket, "executing", approver.id, `${level}级审批通过，开始执行`);
+  const updated = await transitionTicket(
+    syncedTicket,
+    "executing",
+    approver.id,
+    `${level}级审批通过，开始执行`
+  );
   const result = await executeApprovedAction(updated, approvalId);
-  return { ticket: result.ticket, approvalId, executed: true };
+  return { ticket: result.ticket, approvalId, executed: true, amountWarning };
 }
 
 export async function rejectTicket(params: {

@@ -28,6 +28,7 @@ export default function TicketDetailPage() {
   const [fastReason, setFastReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
   const [aiApproval, setAiApproval] = useState<AiApproval | null>(null);
 
@@ -58,6 +59,7 @@ export default function TicketDetailPage() {
   async function doAction(action: string, extra?: Record<string, unknown>) {
     setLoading(true);
     setError("");
+    setNotice("");
     try {
       const res = await fetch(`/api/tickets/${id}/approve`, {
         method: "POST",
@@ -71,6 +73,7 @@ export default function TicketDetailPage() {
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
+      if (result.amountWarning) setNotice(result.amountWarning);
       setConfirmAction(null);
       setComment("");
       await load();
@@ -106,6 +109,7 @@ export default function TicketDetailPage() {
       <p className="mb-6 font-mono text-sm text-[var(--ink-soft)]">{ticket.id as string}</p>
 
       {error && <div className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {notice && <div className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{notice}</div>}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
