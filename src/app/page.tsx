@@ -41,7 +41,7 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <h1 className="mb-2 text-2xl font-bold">工作台</h1>
+      <h1 className="page-title">工作台</h1>
       <p className="mb-8 text-[var(--ink-soft)]">
         运单全生命周期管理 — 录单 → 扫描品控 → 异常上报 → 分级审批 → 执行联动
       </p>

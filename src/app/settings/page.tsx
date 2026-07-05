@@ -37,7 +37,7 @@ export default function SettingsPage() {
   if (error) {
     return (
       <div>
-        <h1 className="mb-6 text-2xl font-bold">规则配置</h1>
+        <h1 className="page-title mb-4">规则配置</h1>
         <div className="card text-[var(--ink-soft)]">{error}</div>
       </div>
     );
@@ -47,7 +47,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold">规则配置</h1>
+      <h1 className="page-title mb-4">规则配置</h1>
 
       <div className="card mb-6">
         <h2 className="mb-4 text-lg font-semibold">系统参数（可配置，非硬编码）</h2>

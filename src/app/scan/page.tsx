@@ -91,7 +91,7 @@ export default function ScanPage() {
 
   return (
     <div className="mx-auto max-w-xl">
-      <h1 className="mb-2 text-2xl font-bold">扫描品控</h1>
+      <h1 className="page-title">扫描品控</h1>
       <p className="mb-6 text-sm text-[var(--ink-soft)]">
         模拟扫描枪录入，通过 V2 接口校验 SKU 归属，品控规则引擎自动判定
       </p>

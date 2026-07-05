@@ -22,6 +22,10 @@ const NAV: Array<{ href: string; label: string; adminOnly?: boolean }> = [
   { href: "/settings", label: "规则配置", adminOnly: true },
 ];
 
+function isNavActive(pathname: string, href: string) {
+  return pathname === href || (href !== "/" && pathname.startsWith(href));
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
@@ -48,22 +52,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     window.location.reload();
   }
 
+  const visibleNav = NAV.filter((item) => !item.adminOnly || user?.role === "admin");
+
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-40 border-b border-[var(--line)] bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-3">
-            <div className="h-3 w-3 rounded-full bg-[var(--accent)] shadow-[0_0_0_4px_var(--accent-tint)]" />
-            <span className="text-lg font-bold text-[var(--ink)]">运单全流程管理 V3</span>
+    <div className="flex min-h-screen flex-col">
+      {/* 顶栏：与 V2 一致的青色实心导航栏 */}
+      <header className="v2-topbar sticky top-0 z-50">
+        <div className="flex h-14 items-center justify-between px-5">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl leading-none text-white/90" aria-hidden>
+              🐋
+            </span>
+            <span className="text-lg font-semibold tracking-wide text-white">
+              运单全流程管理 V3
+            </span>
           </div>
           <div className="flex items-center gap-4">
             {user && (
-              <span className="text-sm text-[var(--ink-soft)]">
+              <span className="hidden text-sm text-white/85 sm:inline">
                 {user.name} · {ROLE_LABELS[user.role] || user.role}
               </span>
             )}
             <select
-              className="input w-auto text-xs"
+              className="v2-topbar-select"
               value={user?.id || ""}
               onChange={(e) => switchUser(e.target.value)}
             >
@@ -76,23 +87,63 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </select>
           </div>
         </div>
-        <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-6 pb-2">
-          {NAV.filter((item) => !item.adminOnly || user?.role === "admin").map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition ${
-                pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href))
-                  ? "bg-[var(--accent-tint)] font-medium text-[var(--accent-dark)]"
-                  : "text-[var(--ink-soft)] hover:bg-gray-50"
-              }`}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <div className="hidden border-t border-white/15 px-5 md:flex md:justify-end md:gap-8">
+          <span className="border-b-2 border-white py-2.5 text-sm font-medium text-white">
+            应用中心
+          </span>
+          <span className="py-2.5 text-sm text-white/70">报表中心</span>
+          <span className="py-2.5 text-sm text-white/70">系统管理</span>
+        </div>
       </header>
-      <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
+
+      <div className="flex flex-1 flex-col md:flex-row">
+        {/* 左侧深色侧栏：对齐 V2 万能导入模块导航 */}
+        <aside className="v2-sidebar hidden w-52 shrink-0 md:block">
+          <p className="px-4 py-4 text-xs tracking-wide text-white/45">异常工单模块</p>
+          <nav className="space-y-0.5 px-2 pb-6">
+            {visibleNav.map((item) => {
+              const active = isNavActive(pathname, item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`block rounded-md px-3 py-2.5 text-sm transition ${
+                    active
+                      ? "bg-[var(--accent)] font-medium text-white"
+                      : "text-white/75 hover:bg-white/8 hover:text-white"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {/* 移动端横向导航 */}
+        <div className="v2-mobile-nav shrink-0 md:hidden">
+          <nav className="flex gap-1 overflow-x-auto px-3 py-2">
+            {visibleNav.map((item) => {
+              const active = isNavActive(pathname, item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs ${
+                    active
+                      ? "bg-[var(--accent)] text-white"
+                      : "text-[var(--ink-soft)]"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+
+        <main className="v2-main flex-1 px-5 py-6 md:px-8">{children}</main>
+      </div>
     </div>
   );
 }

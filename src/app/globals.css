@@ -3,11 +3,14 @@
 :root {
   --accent: #0fc6c2;
   --accent-dark: #0aa6a3;
+  --accent-header: #0d9e9a;
   --accent-tint: #e1f5f4;
+  --sidebar-bg: #1a2433;
   --ink: #16232b;
   --ink-soft: #4a5a63;
   --line: #dfe7e8;
-  --bg: #fbfdfd;
+  --bg: #eef1f4;
+  --card-bg: #ffffff;
 }
 
 body {
@@ -16,24 +19,69 @@ body {
   font-family: -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
 }
 
+/* V2 风格顶栏 */
+.v2-topbar {
+  background: linear-gradient(90deg, var(--accent-header) 0%, var(--accent-dark) 100%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.v2-topbar-select {
+  @apply rounded border border-white/30 bg-white/15 px-2 py-1 text-xs text-white outline-none;
+}
+
+.v2-topbar-select option {
+  color: var(--ink);
+  background: white;
+}
+
+/* V2 风格侧栏 */
+.v2-sidebar {
+  background: var(--sidebar-bg);
+}
+
+.v2-mobile-nav {
+  background: white;
+  border-bottom: 1px solid var(--line);
+}
+
+.v2-main {
+  background: var(--bg);
+  min-height: calc(100vh - 3.5rem);
+}
+
+/* 页面标题：左侧青色竖条，对齐 V2 */
+.page-title {
+  @apply mb-2 flex items-center gap-3 text-2xl font-bold text-[var(--ink)];
+}
+
+.page-title::before {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 1.75rem;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
 .card {
-  @apply rounded-xl border border-[var(--line)] bg-white p-5 shadow-sm;
+  @apply rounded-lg border border-[var(--line)] bg-[var(--card-bg)] p-5 shadow-sm;
 }
 
 .btn-primary {
-  @apply rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition hover:bg-[var(--accent-dark)] disabled:opacity-50;
+  @apply rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition hover:bg-[var(--accent-dark)] disabled:opacity-50;
 }
 
 .btn-secondary {
-  @apply rounded-lg border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--ink-soft)] transition hover:bg-[var(--accent-tint)] disabled:opacity-50;
+  @apply rounded-md border border-[var(--line)] bg-white px-4 py-2 text-sm font-medium text-[var(--ink-soft)] transition hover:bg-[var(--accent-tint)] disabled:opacity-50;
 }
 
 .btn-danger {
-  @apply rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 disabled:opacity-50;
+  @apply rounded-md bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 disabled:opacity-50;
 }
 
 .input {
-  @apply w-full rounded-lg border border-[var(--line)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)];
+  @apply w-full rounded-md border border-[var(--line)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)];
 }
 
 .badge {
@@ -50,14 +98,14 @@ body {
 .badge-warning { @apply bg-orange-100 text-orange-800 animate-pulse; }
 
 .table-wrap {
-  @apply overflow-x-auto rounded-xl border border-[var(--line)];
+  @apply overflow-x-auto rounded-lg border border-[var(--line)] bg-white;
 }
 
 table.data {
   @apply w-full text-sm;
 }
 table.data thead th {
-  @apply bg-[var(--ink)] px-4 py-3 text-left font-medium text-white;
+  @apply bg-[var(--sidebar-bg)] px-4 py-3 text-left font-medium text-white;
 }
 table.data tbody td {
   @apply border-t border-[var(--line)] px-4 py-3 text-[var(--ink-soft)];

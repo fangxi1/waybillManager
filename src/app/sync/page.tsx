@@ -39,7 +39,7 @@ export default function SyncPage() {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold">V2 接口监控</h1>
+      <h1 className="page-title mb-4">V2 接口监控</h1>
 
       <div className="mb-6 grid grid-cols-3 gap-4">
         <div className="card text-center">

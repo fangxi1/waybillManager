@@ -105,7 +105,7 @@ export default function TicketDetailPage() {
 
   return (
     <div>
-      <h1 className="mb-2 text-2xl font-bold">工单详情</h1>
+      <h1 className="page-title">工单详情</h1>
       <p className="mb-6 font-mono text-sm text-[var(--ink-soft)]">{ticket.id as string}</p>
 
       {error && <div className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}

@@ -78,7 +78,7 @@ export default function TicketsPage() {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold">工单列表</h1>
+      <h1 className="page-title mb-4">工单列表</h1>
 
       <div className="card mb-6 flex flex-wrap gap-3">
         <select

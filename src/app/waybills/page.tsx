@@ -43,7 +43,7 @@ export default function WaybillsPage() {
 
   return (
     <div>
-      <h1 className="mb-2 text-2xl font-bold">运单快照</h1>
+      <h1 className="page-title">运单快照</h1>
       <p className="mb-6 text-sm text-[var(--ink-soft)]">
         V3 本地只读缓存，数据来自 V2 集成接口；运单状态以 V2 为准，不可在本表直接修改。
         可在{" "}

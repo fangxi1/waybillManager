@@ -30,7 +30,7 @@ export default function ApprovalsPage() {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold">待我审批</h1>
+      <h1 className="page-title mb-4">待我审批</h1>
       {!user ? (
         <p>请先登录</p>
       ) : tickets.length === 0 ? (

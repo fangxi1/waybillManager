@@ -65,7 +65,7 @@ export default function NewTicketPage() {
 
   return (
     <div className="mx-auto max-w-xl">
-      <h1 className="mb-6 text-2xl font-bold">物流异常上报</h1>
+      <h1 className="page-title mb-4">物流异常上报</h1>
       <div className="card space-y-4">
         <div>
           <label className="mb-1 block text-sm font-medium">运单号 *</label>
