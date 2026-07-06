@@ -4,6 +4,9 @@ import { getDb, schema } from "@/db";
 import { getCurrentUser, canApproveLevel1, canApproveLevel2 } from "@/lib/auth";
 import { suggestApproval } from "@/lib/ai-service";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user || (!canApproveLevel1(user) && !canApproveLevel2(user))) {

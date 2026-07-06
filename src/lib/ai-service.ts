@@ -1,3 +1,4 @@
+import { Agent } from "@cursor/sdk";
 import {
   LOGISTICS_TYPE_LABELS,
   LOGISTICS_TYPES,
@@ -27,21 +28,63 @@ export interface AiApprovalSuggestion {
   disclaimer: string;
 }
 
-const AI_TIMEOUT_MS = 3000;
+const OPENAI_TIMEOUT_MS = 3000;
+const CURSOR_TIMEOUT_MS = 60000;
 
-function isAiEnabled() {
-  return !!(process.env.OPENAI_API_KEY || process.env.AI_API_KEY);
+function getCursorApiKey() {
+  return process.env.CURSOR_API_KEY?.trim() || null;
 }
 
-async function callLlm(prompt: string, system: string): Promise<string | null> {
-  if (!isAiEnabled()) return null;
+function isOpenAiEnabled() {
+  const key = process.env.OPENAI_API_KEY || process.env.AI_API_KEY;
+  return !!key?.trim() && !key.trim().startsWith("crsr_");
+}
 
-  const apiKey = process.env.OPENAI_API_KEY || process.env.AI_API_KEY;
+function isAiEnabled() {
+  return !!getCursorApiKey() || isOpenAiEnabled();
+}
+
+function getCursorModel() {
+  return process.env.CURSOR_MODEL || "composer-2.5";
+}
+
+function extractJsonPayload(raw: string): string | null {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced?.[1] || raw).trim();
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  return candidate.slice(start, end + 1);
+}
+
+async function callCursorLlm(prompt: string, system: string): Promise<string | null> {
+  const apiKey = getCursorApiKey();
+  if (!apiKey) return null;
+
+  const message = `${system}\n\n${prompt}\n\n只返回 JSON，不要使用任何工具，不要读取文件。`;
+
+  try {
+    const result = await Agent.prompt(message, {
+      apiKey,
+      model: { id: getCursorModel() },
+      local: { cwd: process.cwd() },
+    });
+    if (result.status !== "finished" || !result.result?.trim()) return null;
+    return extractJsonPayload(result.result);
+  } catch {
+    return null;
+  }
+}
+
+async function callOpenAiLlm(prompt: string, system: string): Promise<string | null> {
+  if (!isOpenAiEnabled()) return null;
+
+  const apiKey = (process.env.OPENAI_API_KEY || process.env.AI_API_KEY)!.trim();
   const baseUrl = (process.env.AI_API_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   const model = process.env.AI_MODEL || "gpt-4o-mini";
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
 
   try {
     const res = await fetch(`${baseUrl}/chat/completions`, {
@@ -69,6 +112,14 @@ async function callLlm(prompt: string, system: string): Promise<string | null> {
     clearTimeout(timer);
     return null;
   }
+}
+
+async function callLlm(prompt: string, system: string): Promise<string | null> {
+  if (getCursorApiKey()) {
+    const cursorRaw = await callCursorLlm(prompt, system);
+    if (cursorRaw) return cursorRaw;
+  }
+  return callOpenAiLlm(prompt, system);
 }
 
 function ruleBasedClassify(description: string, category: "logistics" | "qc"): AiClassifyResult {
@@ -132,12 +183,13 @@ export async function classifyException(
     try {
       const parsed = JSON.parse(raw);
       if ((types as readonly string[]).includes(parsed.type)) {
+        const provider = getCursorApiKey() ? `Cursor ${getCursorModel()}` : "OpenAI";
         return {
           suggestedType: parsed.type,
           typeLabel: labels[parsed.type] || parsed.type,
           severity: parsed.severity || "medium",
           confidence: Number(parsed.confidence) || 0.7,
-          reasoning: `大模型分析：${parsed.reasoning || "基于语义理解"}`,
+          reasoning: `${provider} 分析：${parsed.reasoning || "基于语义理解"}`,
           source: "ai",
           disclaimer: AI_DISCLAIMER,
         };
@@ -209,11 +261,12 @@ export async function suggestApproval(params: {
         reject: "建议拒绝",
         escalate: "建议升级",
       };
+      const provider = getCursorApiKey() ? `Cursor ${getCursorModel()}` : "OpenAI";
       return {
         suggestion: parsed.suggestion || ruleSuggestion.suggestion,
         suggestionLabel: map[parsed.suggestion] || ruleSuggestion.suggestionLabel,
         confidence: Number(parsed.confidence) || 0.75,
-        reasoning: `大模型分析：${parsed.reasoning}（参考了 ${refs.length} 条历史审批记录）`,
+        reasoning: `${provider} 分析：${parsed.reasoning}（参考了 ${refs.length} 条历史审批记录）`,
         referenceRecords: ruleSuggestion.referenceRecords,
         source: "ai",
         disclaimer: AI_DISCLAIMER,
@@ -225,3 +278,11 @@ export async function suggestApproval(params: {
 
   return ruleSuggestion;
 }
+
+export function getAiProviderLabel() {
+  if (getCursorApiKey()) return `Cursor ${getCursorModel()}`;
+  if (isOpenAiEnabled()) return process.env.AI_MODEL || "gpt-4o-mini";
+  return "规则引擎";
+}
+
+export const AI_REQUEST_TIMEOUT_MS = getCursorApiKey() ? CURSOR_TIMEOUT_MS : OPENAI_TIMEOUT_MS;

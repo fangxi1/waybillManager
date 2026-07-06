@@ -59,7 +59,9 @@ npx vercel --prod
 | `V2_API_BASE_URL` | `https://<v2-host>/api/integration` |
 | `V2_API_KEY` | `waybill-v3-secret-key` |
 | `CRON_SECRET` | 随机强密码 |
-| `OPENAI_API_KEY` | （可选）AI 加分项 |
+| `CURSOR_API_KEY` | （可选）Cursor 生成的 Key，`crsr_...` 开头，启用线上 AI |
+| `CURSOR_MODEL` | （可选）默认 `composer-2.5` |
+| `OPENAI_API_KEY` | （可选）OpenAI 兼容 API，作为 Cursor 的备选 |
 
 ## 第四步：初始化生产数据库
 
@@ -101,10 +103,16 @@ npm run dev -- -p 3001
 
 ## AI 功能（可选）
 
-配置 `OPENAI_API_KEY` 后：
-- 异常上报页：「AI 辅助分类」按钮
+**本地**：在 `.env.local` 配置 `CURSOR_API_KEY`（`crsr_...`）。
+
+**线上 Vercel**：在 Dashboard → Environment Variables 添加 `CURSOR_API_KEY` 和 `CURSOR_MODEL=composer-2.5`，然后 Redeploy。详见 [docs/VERCEL_AI.md](VERCEL_AI.md)。
+
+- 异常上报页：「AI 辅助分类」
+- 扫描页：「AI 辅助判定品控子类型」
 - 工单详情页：审批人可见「审批 AI 建议」
 
-未配置时自动降级为规则引擎，不阻塞主流程。
+未配置或调用失败时自动降级为规则引擎，不阻塞主流程。
+
+> **注意**：Vercel Hobby 套餐函数超时 10 秒，Cursor 分析约 15 秒，线上可能仍显示「规则引擎」。升级 Pro 套餐后可稳定使用大模型。
 
 详见 `docs/AI.md`。
